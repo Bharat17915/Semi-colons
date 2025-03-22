@@ -88,13 +88,19 @@ async def upload_excel(
         contents = await file.read()
         df = pd.read_excel(io.BytesIO(contents), sheet_name=sheet_name)
         required_cols = {
-            'Facility', 'Date', 'Day', 'Access Control Data (Footfall)', 'Lunch Ordered Previous Day',
-            'Additional Order', 'Total Order(F+G)', 'Lunch Actual', 'Difference (H-G)', 'Dry Veg',
-            'Gravy Veg', 'Rice', 'Dal', 'Sweet', 'Remarks/Justifications', 'Snacks Ordered Previous day',
-            'Additional order2', 'Snacks Actual', 'DIffrence2 (J-L)', 'Menu', 'Remarks/Justifications2'
+        'facility', 'date', 'day', 'access control data (footfall)', 'lunch ordered previous day',
+        'additional order', 'total order(f+g)', 'lunch actual', 'difference (h-g)', 'dry veg',
+        'gravy veg', 'rice', 'dal', 'sweet', 'remarks/justifications', 'snacks ordered previous day',
+        'additional order2', 'snacks actual', 'diffrence2 (j-l)', 'menu', 'remarks/justifications2'
         }
-        if not required_cols.issubset(df.columns):
+
+        # Normalize the column names in the DataFrame
+        df_columns_normalized = {col.lower() for col in df.columns}
+
+        # Check if all required columns are present
+        if not required_cols.issubset(df_columns_normalized):
             raise HTTPException(status_code=400, detail="Excel sheet is missing required columns.")
+
         train_model(df)
         X = df[['Access Control Data (Footfall)', 'Lunch Ordered Previous Day', 'Snacks Ordered Previous day']]
         predictions = trained_model.predict(X)
