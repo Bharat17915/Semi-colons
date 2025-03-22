@@ -88,13 +88,19 @@ async def upload_excel(
         contents = await file.read()
         df = pd.read_excel(io.BytesIO(contents), sheet_name=sheet_name)
         required_cols = {
-            'Facility', 'Date', 'Day', 'Access Control Data (Footfall)', 'Lunch Ordered Previous Day',
-            'Additional Order', 'Total Order(F+G)', 'Lunch Actual', 'Difference (H-G)', 'Dry Veg',
-            'Gravy Veg', 'Rice', 'Dal', 'Sweet', 'Remarks/Justifications', 'Snacks Ordered Previous day',
-            'Additional order2', 'Snacks Actual', 'DIffrence2 (J-L)', 'Menu', 'Remarks/Justifications2'
+        'facility', 'date', 'day', 'access control data (footfall)', 'lunch ordered previous day',
+        'additional order', 'total order(f+g)', 'lunch actual', 'difference (h-g)', 'dry veg',
+        'gravy veg', 'rice', 'dal', 'sweet', 'remarks/justifications', 'snacks ordered previous day',
+        'additional order2', 'snacks actual', 'diffrence2 (j-l)', 'menu', 'remarks/justifications2'
         }
-        if not required_cols.issubset(df.columns):
+
+        # Normalize the column names in the DataFrame
+        df_columns_normalized = {col.lower() for col in df.columns}
+
+        # Check if all required columns are present
+        if not required_cols.issubset(df_columns_normalized):
             raise HTTPException(status_code=400, detail="Excel sheet is missing required columns.")
+
         train_model(df)
         X = df[['Access Control Data (Footfall)', 'Lunch Ordered Previous Day', 'Snacks Ordered Previous day']]
         predictions = trained_model.predict(X)
@@ -110,6 +116,32 @@ async def upload_excel(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
+def generate_heatmap(df, column):
+    facilities = df['Facility']
+    values = df[column]
+    
+    x = np.arange(len(facilities))
+    width = 0.4
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(x, values, width, label=column)
+    
+    ax.set_xlabel('Facility')
+    ax.set_ylabel(column)
+    ax.set_title(f'{column} per Facility')
+    ax.set_xticks(x)
+    ax.set_xticklabels(facilities, rotation=45, ha='right')
+    ax.legend()
+    
+    plt.tight_layout()
+    
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    plt.close()
+    buf.seek(0)
+    
+    return base64.b64encode(buf.getvalue()).decode('utf-8')
+
 @app.post("/predict/")
 async def predict(
     file: UploadFile = File(None),
@@ -119,13 +151,7 @@ async def predict(
     additional_order: int = Query(None),
     snacks_ordered_prev: int = Query(None),
     additional_order2: int = Query(None),
-    predict_wastage: bool = False
 ):
-    """
-    Endpoint to predict food consumption.
-    - If a file is uploaded, predicts per facility (bulk mode).
-    - If values are provided directly, predicts for those inputs.
-    """
     global trained_model
 
     if trained_model is None:
@@ -137,22 +163,24 @@ async def predict(
             df = pd.read_excel(io.BytesIO(contents))
             if 'Facility' not in df.columns:
                 raise HTTPException(status_code=400, detail="Excel file must contain 'Facility' column.")
+            
+            # Preprocess data (assuming preprocess_data exists)
             df = preprocess_data(df)
-
-            # Select features
+            
+            # Select features for prediction
             X = df[['Access Control Data (Footfall)', 'Lunch Ordered Previous Day',
                     'Additional Order', 'Total Order(F+G)', 'Snacks Ordered Previous day', 'Additional order2']]
-
+            
             predictions = trained_model.predict(X)
             df[['Lunch Prediction', 'Snacks Prediction']] = predictions
-
-            # Group results by facility
+            
+            # Group by facility
             result = df.groupby("Facility")[['Lunch Prediction', 'Snacks Prediction']].mean().reset_index()
-
+            
             # Generate heatmaps
             lunch_heatmap = generate_heatmap(result, 'Lunch Prediction')
             snacks_heatmap = generate_heatmap(result, 'Snacks Prediction')
-
+            
             return {
                 "predictions": result.to_dict(orient="records"),
                 "heatmaps": {
@@ -160,63 +188,44 @@ async def predict(
                     "snacks": snacks_heatmap
                 }
             }
-
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
-
+    
     elif any(v is not None for v in [footfall, lunch_ordered_prev, additional_order, snacks_ordered_prev, additional_order2]):
         input_data = np.array([[footfall or 0, lunch_ordered_prev or 0, additional_order or 0, snacks_ordered_prev or 0, additional_order2 or 0]])
         prediction = trained_model.predict(input_data)
-
-        lunch_actual, snacks_actual = prediction[0]  # If predicting wastage, adjust accordingly
+        
+        lunch_actual, snacks_actual = prediction[0][:2]  # Adjust indices if more predictions are added
+        lunch_wastage, snacks_wastage = (prediction[0][2:4] if len(prediction[0]) > 2 else (0, 0))
+        
         response = {
             "prediction": {
                 "lunch_actual": float(lunch_actual),
                 "snacks_actual": float(snacks_actual),
+                "lunch_wastage": float(lunch_wastage),
+                "snacks_wastage": float(snacks_wastage),
             }
         }
-        lunch_wastage, snacks_wastage = prediction[0][2:4] if len(prediction[0]) > 2 else (0, 0)
-        response["prediction"]["lunch_wastage"] = float(lunch_wastage)
-        response["prediction"]["snacks_wastage"] = float(snacks_wastage)
         
         single_df = pd.DataFrame([{
-        "Facility": "Single Input",
-        "Lunch Prediction": response["prediction"]["lunch_actual"],
-        "Snacks Prediction": response["prediction"]["snacks_actual"],
-        "Lunch Wastage Prediction": response["prediction"]["lunch_wastage"],
-        "Snacks Wastage Prediction": response["prediction"]["snacks_wastage"]
+            "Facility": "Single Input",
+            "Lunch Prediction": lunch_actual,
+            "Snacks Prediction": snacks_actual,
+            "Lunch Wastage Prediction": lunch_wastage,
+            "Snacks Wastage Prediction": snacks_wastage
         }])
-
+        
         response["heatmaps"] = {
             "lunch": generate_heatmap(single_df, "Lunch Prediction"),
             "snacks": generate_heatmap(single_df, "Snacks Prediction"),
-            "lunch wastage": generate_heatmap(single_df,"Lunch Wastage Prediction"),
-            "snacks wastage": generate_heatmap(single_df,"Lunch Wastage Prediction")
+            "lunch wastage": generate_heatmap(single_df, "Lunch Wastage Prediction"),
+            "snacks wastage": generate_heatmap(single_df, "Snacks Wastage Prediction")
         }
-
+        
         return response
-
+    
     else:
         raise HTTPException(status_code=400, detail="Provide either an Excel file or input values for prediction.")
-
-
-
-def generate_heatmap(df, value_col):
-    """
-    Generates a heatmap for the given dataframe and value column.
-    Returns the heatmap as a base64-encoded image.
-    """
-    plt.figure(figsize=(10, 6))
-    pivot_df = df.pivot(index="Facility", columns=None, values=value_col)
-    sns.heatmap(pivot_df, annot=True, cmap="coolwarm", fmt=".1f")
-    plt.title(f"{value_col} Heatmap")
-    
-    # Convert plot to image
-    buf = BytesIO()
-    plt.savefig(buf, format="png")
-    plt.close()
-    buf.seek(0)
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 @app.post("/admin/train_full_dataset/")
