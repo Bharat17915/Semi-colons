@@ -70,15 +70,20 @@ def train_model(data: pd.DataFrame):
 
 
 @app.post("/upload_excel/")
-async def upload_excel(file: UploadFile = File(...)):
+async def upload_excel(
+    file: UploadFile = File(...), 
+    sheet_name: str = Form(...)
+):
     """
-    Endpoint to upload an Excel file and train the model.
+    Endpoint to upload an Excel file and train the model using a specific sheet.
     """
     global trained_model
 
     try:
         contents = await file.read()
-        df = pd.read_excel(io.BytesIO(contents))
+        # Read the Excel file with the given sheet name
+        df = pd.read_excel(io.BytesIO(contents), sheet_name=sheet_name)
+
         required_cols = {
             'Facility', 'Date', 'Day', 'Access Control Data (Footfall)', 'Lunch Ordered Previous Day',
             'Additional Order', 'Total Order(F+G)', 'Lunch Actual', 'Difference (H-G)', 'Dry Veg',
@@ -87,10 +92,12 @@ async def upload_excel(file: UploadFile = File(...)):
         }
         if not required_cols.issubset(df.columns):
             raise HTTPException(status_code=400, detail="Excel sheet is missing required columns.")
-        
+
         train_model(df)
         return {"message": "Model trained successfully!"}
 
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=f"Invalid sheet name: {str(ve)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
