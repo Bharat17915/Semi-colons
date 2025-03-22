@@ -163,7 +163,6 @@ async def predict(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
-    # ✅ **Single Prediction (if values are provided)**
     elif any(v is not None for v in [footfall, lunch_ordered_prev, additional_order, snacks_ordered_prev, additional_order2]):
         input_data = np.array([[footfall or 0, lunch_ordered_prev or 0, additional_order or 0, snacks_ordered_prev or 0, additional_order2 or 0]])
         prediction = trained_model.predict(input_data)
