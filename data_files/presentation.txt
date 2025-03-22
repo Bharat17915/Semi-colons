@@ -1,0 +1,12 @@
+Things to add as future scope / improvements
+1. Accuracy of data
+	- Special occassions do not match across locations
+	- Rain advisory data does not match
+2. Clarity of data
+	- 'Low turn out' mentioned, but event is not mentioned
+	- Fasting day mentioned, justification not given
+3. Menu items should be common for processing
+	- Items like Varan, Dal fry written in 4 different ways
+	- Spelling mistakes are very common
+4. Individual menu item count missing
+	- Watermelon is often in demand during summers, data should be provided.
