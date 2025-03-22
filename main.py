@@ -112,7 +112,7 @@ async def upload_excel(
                          'dal', 'difference lunch(h-g)', 'total snacks', 'snacks actual', 
                          'lunch actual', 'rice', 'additional snacks', 'remarks', 'menu', 
                          'lunch ordered', 'snacks ordered', 'justification', 'total lunch (e+f)', 
-                         'sweet', 'gravy veg', 'day', 'additional lunch', 'date',}
+                         'sweet', 'gravy veg', 'day', 'additional lunch', 'date'}
        
         # Normalize the column names in the DataFrame
         df_columns_normalized = {col.lower() for col in df.columns}
@@ -140,7 +140,7 @@ async def upload_excel(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
-def generate_heatmap(X, col1, col2):
+def generate_heatmap(X, col1, col2=None):
     facilities = X["facility"]
     values1 = X[col1]
     values2 = X[col2]
@@ -216,6 +216,7 @@ async def predict_file(
 
 @app.post("/predict/")
 async def predict(
+    facility: str = Form(None),
     footfall: int = Form(None),
     lunch_ordered_prev: int = Form(None),
     additional_order: int = Form(None),
@@ -223,50 +224,71 @@ async def predict(
     additional_order2: int = Form(None)
 ):
     """
-    Endpoint to predict food consumption based on direct input values.
+    Endpoint to predict food consumption for a single input.
+    All missing features are set to zero to match the trained model.
     """
     global trained_model
 
     if trained_model is None:
         raise HTTPException(status_code=400, detail="Model is not trained. Please upload an Excel file first.")
-
-    if any(v is not None for v in [footfall, lunch_ordered_prev, additional_order, snacks_ordered_prev, additional_order2]):
-        input_data = np.array([[footfall or 0, lunch_ordered_prev or 0, additional_order or 0, snacks_ordered_prev or 0, additional_order2 or 0]])
-        prediction = trained_model.predict(input_data)
-        
-        lunch_actual, snacks_actual = prediction[0][:2]  # Adjust indices if more predictions are added
-        lunch_wastage, snacks_wastage = (prediction[0][2:4] if len(prediction[0]) > 2 else (0, 0))
-        
-        response = {
-            "prediction": {
-                "lunch_actual": float(lunch_actual),
-                "snacks_actual": float(snacks_actual),
-                "lunch_wastage": float(lunch_wastage),
-                "snacks_wastage": float(snacks_wastage),
-            }
-        }
-        
-        single_df = pd.DataFrame([{
-            "Facility": "Single Input",
-            "Lunch Prediction": lunch_actual,
-            "Snacks Prediction": snacks_actual,
-            "Lunch Wastage Prediction": lunch_wastage,
-            "Snacks Wastage Prediction": snacks_wastage
-        }])
-        
-        response["heatmaps"] = {
-            "lunch": generate_heatmap(single_df, "Lunch Prediction"),
-            "snacks": generate_heatmap(single_df, "Snacks Prediction"),
-            "lunch wastage": generate_heatmap(single_df, "Lunch Wastage Prediction"),
-            "snacks wastage": generate_heatmap(single_df, "Snacks Wastage Prediction")
-        }
-        
-        return response
     
-    else:
-        raise HTTPException(status_code=400, detail="Provide input values for prediction.")
-
-
+    # Construct input with all expected features
+    input_data = pd.DataFrame([{
+        'footfall': footfall or 0,
+        'lunch ordered': lunch_ordered_prev or 0,
+        'additional lunch': additional_order or 0,
+        'total lunch (e+f)': 0,  # Defaulting to zero
+        'difference lunch(h-g)': 0,
+        'total snacks': 0,
+        'snacks ordered': snacks_ordered_prev or 0,
+        'additional snacks': additional_order2 or 0,
+        'date': 0,  # Placeholder, assuming preprocessing handles date
+        'day': 0,
+        'difference snacks(s-r)': 0
+    }])
+    required_cols = {'facility', 'difference snacks(s-r)', 'footfall', 'dry veg', 
+                         'dal', 'difference lunch(h-g)', 'total snacks', 'snacks actual', 
+                         'lunch actual', 'rice', 'additional snacks', 'remarks', 'menu', 
+                         'lunch ordered', 'snacks ordered', 'justification', 'total lunch (e+f)', 
+                         'sweet', 'gravy veg', 'day', 'additional lunch', 'date'}
+       
+        # Normalize the column names in the DataFrame
+    refer= required_cols
+    # Preprocess the input to match training format
+    input_data = preprocess_data(input_data,reference_columns=refer)
+    
+    # Make predictions
+    prediction = trained_model.predict(input_data)
+    lunch_actual, snacks_actual = prediction[0][:2]
+    lunch_wastage, snacks_wastage = (prediction[0][2:4] if len(prediction[0]) > 2 else (0, 0))
+    
+    response = {
+        "prediction": {
+            "lunch_actual": float(lunch_actual),
+            "snacks_actual": float(snacks_actual),
+            "lunch_wastage": float(lunch_wastage),
+            "snacks_wastage": float(snacks_wastage),
+        }
+    }
+    
+    # Prepare heatmap input
+    single_df = pd.DataFrame([{
+        "facility": facility,
+        "Lunch Prediction": lunch_actual,
+        "Snacks Prediction": snacks_actual,
+        "Lunch Wastage Prediction": lunch_wastage,
+        "Snacks Wastage Prediction": snacks_wastage
+    }])
+    import pdb;pdb.set_trace()
+    # Generate heatmaps
+    response["heatmaps"] = {
+        "lunch": generate_heatmap(single_df, "Lunch Prediction"),
+        "snacks": generate_heatmap(single_df, "Snacks Prediction"),
+        "lunch wastage": generate_heatmap(single_df, "Lunch Wastage Prediction"),
+        "snacks wastage": generate_heatmap(single_df, "Snacks Wastage Prediction")
+    }
+    
+    return response
 
 @app.post("/admin/train_full_dataset/")
 async def admin_train_full_dataset(file: UploadFile = File(...)):
