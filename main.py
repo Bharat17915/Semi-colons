@@ -113,6 +113,7 @@ async def upload_excel(
 @app.post("/predict/")
 async def predict(
     file: UploadFile = File(None),
+    sheet_name: str = Form(None),
     footfall: int = Query(None),
     lunch_ordered_prev: int = Query(None),
     additional_order: int = Query(None),
@@ -174,20 +175,23 @@ async def predict(
                 "snacks_actual": float(snacks_actual),
             }
         }
-        if predict_wastage:
-            lunch_wastage, snacks_wastage = prediction[0][2:4] if len(prediction[0]) > 2 else (0, 0)
-            response["prediction"]["lunch_wastage"] = float(lunch_wastage)
-            response["prediction"]["snacks_wastage"] = float(snacks_wastage)
+        lunch_wastage, snacks_wastage = prediction[0][2:4] if len(prediction[0]) > 2 else (0, 0)
+        response["prediction"]["lunch_wastage"] = float(lunch_wastage)
+        response["prediction"]["snacks_wastage"] = float(snacks_wastage)
         
         single_df = pd.DataFrame([{
         "Facility": "Single Input",
         "Lunch Prediction": response["prediction"]["lunch_actual"],
-        "Snacks Prediction": response["prediction"]["snacks_actual"]
+        "Snacks Prediction": response["prediction"]["snacks_actual"],
+        "Lunch Wastage Prediction": response["prediction"]["lunch_wastage"],
+        "Snacks Wastage Prediction": response["prediction"]["snacks_wastage"]
         }])
 
         response["heatmaps"] = {
             "lunch": generate_heatmap(single_df, "Lunch Prediction"),
-            "snacks": generate_heatmap(single_df, "Snacks Prediction")
+            "snacks": generate_heatmap(single_df, "Snacks Prediction"),
+            "lunch wastage": generate_heatmap(single_df,"Lunch Wastage Prediction"),
+            "snacks wastage": generate_heatmap(single_df,"Lunch Wastage Prediction")
         }
 
         return response
