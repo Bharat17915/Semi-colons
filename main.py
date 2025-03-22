@@ -216,7 +216,7 @@ def generate_heatmap(df, value_col):
 
 
 @app.post("/admin/train_full_dataset/")
-async def admin_train_full_dataset(file: UploadFile = File(...), user_role: str = Depends(verify_admin)):
+async def admin_train_full_dataset(file: UploadFile = File(...)):
     """
     Admin-only function to train the model with the entire dataset, without removing holidays or Sundays.
     This function does not impact the regular training or prediction process.
