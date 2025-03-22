@@ -128,11 +128,11 @@ async def upload_excel(
         x["Predicted_Consumption"] = predictions[:, 0]
         x["Predicted_Wastage"] = predictions[:, 1]
         x["facility"] = X.loc[x.index, "facility"]
-        generate_heatmap(X=x, col1="Predicted_Consumption", col2="Predicted_Wastage")
+        heat_map = generate_heatmap(X=x, col1="Predicted_Consumption", col2="Predicted_Wastage")
         response = {
             "message": "Model trained successfully!",
             "predictions": predictions.tolist(),
-            "heatmaps": ["lunch_heatmap.png", "snacks_heatmap.png"]
+            "heatmaps": heat_map
         }
         return response
     except ValueError as ve:
@@ -143,7 +143,12 @@ async def upload_excel(
 def generate_heatmap(X, col1, col2=None):
     facilities = X["facility"]
     values1 = X[col1]
+    if col2 is None or col2 not in X.columns:
+        X[col2] = 0  # Create the column with zeros
+    else:
+        X[col2] = X[col2].fillna(0) 
     values2 = X[col2]
+
     
     x = np.arange(len(facilities))
     width = 0.4
