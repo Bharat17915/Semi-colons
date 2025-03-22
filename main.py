@@ -4,7 +4,9 @@ from datetime import datetime
 import seaborn as sns
 import matplotlib.pyplot as plt
 import io
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form
+import base64
+from io import BytesIO
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form, Query
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
@@ -108,13 +110,6 @@ async def upload_excel(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
-import matplotlib.pyplot as plt
-import seaborn as sns
-import base64
-from io import BytesIO
-
-from fastapi import Query
-
 @app.post("/predict/")
 async def predict(
     file: UploadFile = File(None),
@@ -135,15 +130,12 @@ async def predict(
     if trained_model is None:
         raise HTTPException(status_code=400, detail="Model is not trained. Please upload an Excel file first.")
 
-    # ✅ **Bulk Prediction (if file is provided)**
     if file:
         try:
             contents = await file.read()
             df = pd.read_excel(io.BytesIO(contents))
-
             if 'Facility' not in df.columns:
                 raise HTTPException(status_code=400, detail="Excel file must contain 'Facility' column.")
-
             df = preprocess_data(df)
 
             # Select features
@@ -187,6 +179,17 @@ async def predict(
             lunch_wastage, snacks_wastage = prediction[0][2:4] if len(prediction[0]) > 2 else (0, 0)
             response["prediction"]["lunch_wastage"] = float(lunch_wastage)
             response["prediction"]["snacks_wastage"] = float(snacks_wastage)
+        
+        single_df = pd.DataFrame([{
+        "Facility": "Single Input",
+        "Lunch Prediction": response["prediction"]["lunch_actual"],
+        "Snacks Prediction": response["prediction"]["snacks_actual"]
+        }])
+
+        response["heatmaps"] = {
+            "lunch": generate_heatmap(single_df, "Lunch Prediction"),
+            "snacks": generate_heatmap(single_df, "Snacks Prediction")
+        }
 
         return response
 
