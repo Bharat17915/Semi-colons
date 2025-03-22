@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import io
 import base64
 from io import BytesIO
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Query
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
@@ -19,7 +19,7 @@ model = LinearRegression()
 trained_model = None  # Ensuring a global trained model reference
 
 
-def preprocess_data(data: pd.DataFrame):
+def preprocess_data(data: pd.DataFrame, reference_columns=None):
     """
     Preprocess the data by:
     - Removing holidays based on 'Remarks/Justifications'
@@ -27,22 +27,43 @@ def preprocess_data(data: pd.DataFrame):
     - Converting necessary columns to numeric
     """
 
-    data['Date'] = pd.to_datetime(data['Date'], errors='coerce')
-    data = data.dropna(subset=['Date'])
-    data = data[data['Date'].dt.dayofweek != 6]  # 6 = Sunday
+    if reference_columns:
+        reference_column = ['footfall', 'additional lunch', 'total lunch (e+f)', 'lunch ordered', 'difference lunch(h-g)',
+              'total snacks','snacks ordered','additional snacks','date','day','difference snacks(s-r)' ]
+        for col in reference_column:
+            if col not in data.columns:
+                data[col] = 0  # Assign a default value (can be changed if needed)
+        data = data[reference_column]
+
+    data['date'] = pd.to_datetime(data['date'], errors='coerce')
+    data = data.dropna(subset=['date'])
+    data = data[data['date'].dt.dayofweek != 6]  # 6 = Sunday
+
+    for col in data.select_dtypes(include=['datetime64[ns]']):
+        data[col] = data[col].astype(int) // 10**9
 
     # Remove holidays (if "Holiday" is mentioned in "Remarks/Justifications")
-    if 'Remarks/Justifications' in data.columns:
-        data = data[~data['Remarks/Justifications'].str.contains("Holiday", case=False, na=False)]
+    if reference_columns:
+        pass
+    else:
+        if 'remarks' or' justification' in data.columns:
+            data['remarks'] = data['remarks'].astype(str)
+            data['justification'] = data['justification'].astype(str)
+            data = data[~data['remarks'].str.contains("Holiday", case=False, na=False)]
 
     numeric_cols = [
-        'Access Control Data (Footfall)', 'Lunch Ordered Previous Day', 'Additional Order', 'Total Order(F+G)',
-        'Lunch Actual', 'Difference (H-G)',
-        'Snacks Ordered Previous day', 'Additional order2', 'Snacks Actual', 'DIffrence2 (J-L)'
+        'footfall', 'lunch ordered', 'additional lunch', 'total lunch (e+f)',
+        'difference lunch(h-g)',
+        'snacks ordered', 'additional snacks', 'difference snacks(s-r)'
     ]
 
     for col in numeric_cols:
         data[col] = pd.to_numeric(data[col], errors='coerce')
+    categorical_cols = ['day', 'facility', 'menu']  # Add other categorical columns if needed
+    for col in categorical_cols:
+        if col in data.columns:
+            data[col] = data[col].astype('category').cat.codes 
+
     data = data.dropna()
     return data
 
@@ -58,14 +79,14 @@ def train_model(data: pd.DataFrame):
         raise ValueError("No valid data available for training after preprocessing.")
 
     # Keep 'Facility' for later grouping but exclude it from training
-    facilities = data[['Facility']]  
+    facilities = data[['facility']]  
 
     # Select predictive features (keep important ones)
-    X = data[['Access Control Data (Footfall)', 'Lunch Ordered Previous Day', 
-              'Additional Order', 'Total Order(F+G)', 'Snacks Ordered Previous day', 'Additional order2']]
+    X = data[['footfall', 'additional lunch', 'total lunch (e+f)', 'lunch ordered', 'difference lunch(h-g)',
+              'total snacks','snacks ordered','additional snacks','date','day','difference snacks(s-r)' ]]
     
     # Target variables (Lunch and Snacks Actuals)
-    y = data[['Lunch Actual', 'Snacks Actual']]
+    y = data[['lunch actual', 'snacks actual']]
 
     # Train-test split
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -87,24 +108,27 @@ async def upload_excel(
     try:
         contents = await file.read()
         df = pd.read_excel(io.BytesIO(contents), sheet_name=sheet_name)
-        required_cols = {
-        'facility', 'date', 'day', 'access control data (footfall)', 'lunch ordered previous day',
-        'additional order', 'total order(f+g)', 'lunch actual', 'difference (h-g)', 'dry veg',
-        'gravy veg', 'rice', 'dal', 'sweet', 'remarks/justifications', 'snacks ordered previous day',
-        'additional order2', 'snacks actual', 'diffrence2 (j-l)', 'menu', 'remarks/justifications2'
-        }
-
+        required_cols = {'facility', 'difference snacks(s-r)', 'footfall', 'dry veg', 
+                         'dal', 'difference lunch(h-g)', 'total snacks', 'snacks actual', 
+                         'lunch actual', 'rice', 'additional snacks', 'remarks', 'menu', 
+                         'lunch ordered', 'snacks ordered', 'justification', 'total lunch (e+f)', 
+                         'sweet', 'gravy veg', 'day', 'additional lunch', 'date',}
+       
         # Normalize the column names in the DataFrame
         df_columns_normalized = {col.lower() for col in df.columns}
-
+        facilities = df[['facility']]
         # Check if all required columns are present
         if not required_cols.issubset(df_columns_normalized):
             raise HTTPException(status_code=400, detail="Excel sheet is missing required columns.")
-
+        
         train_model(df)
-        X = df[['Access Control Data (Footfall)', 'Lunch Ordered Previous Day', 'Snacks Ordered Previous day']]
-        predictions = trained_model.predict(X)
-        generate_heatmap(df, predictions)
+        X = df[['footfall', 'lunch ordered', 'snacks ordered','facility']]
+        x = preprocess_data(X,reference_columns=df_columns_normalized)
+        predictions = trained_model.predict(x)
+        x["Predicted_Consumption"] = predictions[:, 0]
+        x["Predicted_Wastage"] = predictions[:, 1]
+        x["facility"] = X.loc[x.index, "facility"]
+        generate_heatmap(X=x, col1="Predicted_Consumption", col2="Predicted_Wastage")
         response = {
             "message": "Model trained successfully!",
             "predictions": predictions.tolist(),
@@ -116,82 +140,97 @@ async def upload_excel(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
-def generate_heatmap(df, column):
-    facilities = df['Facility']
-    values = df[column]
+def generate_heatmap(X, col1, col2):
+    facilities = X["facility"]
+    values1 = X[col1]
+    values2 = X[col2]
     
     x = np.arange(len(facilities))
     width = 0.4
     
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.bar(x, values, width, label=column)
+    ax.bar(x - width/2, values1, width, label=col1, color="blue")
+    ax.bar(x + width/2, values2, width, label=col2, color="red")
     
-    ax.set_xlabel('Facility')
-    ax.set_ylabel(column)
-    ax.set_title(f'{column} per Facility')
+    ax.set_xlabel("Facility")
+    ax.set_ylabel("Values")
+    ax.set_title(f"{col1} & {col2} per Facility")
     ax.set_xticks(x)
-    ax.set_xticklabels(facilities, rotation=45, ha='right')
+    ax.set_xticklabels(facilities, rotation=45, ha="right")
     ax.legend()
     
     plt.tight_layout()
     
     buf = BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format="png")
     plt.close()
     buf.seek(0)
     
-    return base64.b64encode(buf.getvalue()).decode('utf-8')
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-@app.post("/predict/")
-async def predict(
-    file: UploadFile = File(None),
-    sheet_name: str = Form(None),
-    footfall: int = Query(None),
-    lunch_ordered_prev: int = Query(None),
-    additional_order: int = Query(None),
-    snacks_ordered_prev: int = Query(None),
-    additional_order2: int = Query(None),
+@app.post("/predict-file/")
+async def predict_file(
+    file: UploadFile = File(...),
+    sheet_name: str = Form(...)
 ):
+    """
+    Endpoint to predict food consumption per facility using an uploaded Excel file and sheet name.
+    """
     global trained_model
 
     if trained_model is None:
         raise HTTPException(status_code=400, detail="Model is not trained. Please upload an Excel file first.")
 
-    if file:
-        try:
-            contents = await file.read()
-            df = pd.read_excel(io.BytesIO(contents))
-            if 'Facility' not in df.columns:
-                raise HTTPException(status_code=400, detail="Excel file must contain 'Facility' column.")
-            
-            # Preprocess data (assuming preprocess_data exists)
-            df = preprocess_data(df)
-            
-            # Select features for prediction
-            X = df[['Access Control Data (Footfall)', 'Lunch Ordered Previous Day',
-                    'Additional Order', 'Total Order(F+G)', 'Snacks Ordered Previous day', 'Additional order2']]
-            
-            predictions = trained_model.predict(X)
-            df[['Lunch Prediction', 'Snacks Prediction']] = predictions
-            
-            # Group by facility
-            result = df.groupby("Facility")[['Lunch Prediction', 'Snacks Prediction']].mean().reset_index()
-            
-            # Generate heatmaps
-            lunch_heatmap = generate_heatmap(result, 'Lunch Prediction')
-            snacks_heatmap = generate_heatmap(result, 'Snacks Prediction')
-            
-            return {
-                "predictions": result.to_dict(orient="records"),
-                "heatmaps": {
-                    "lunch": lunch_heatmap,
-                    "snacks": snacks_heatmap
-                }
+    try:
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents), sheet_name=sheet_name)
+        
+        if 'Facility' not in df.columns:
+            raise HTTPException(status_code=400, detail="Excel file must contain 'Facility' column.")
+        
+        df = preprocess_data(df)
+        
+        # Select features
+        X = df[['footfall', 'lunch ordered', 'additional lunch', 'total lunch (e+f)', 'snacks ordered', 'additonal snacks']]
+        
+        predictions = trained_model.predict(X)
+        df[['Lunch Prediction', 'Snacks Prediction']] = predictions
+        
+        # Group by facility
+        result = df.groupby("Facility")[['Lunch Prediction', 'Snacks Prediction']].mean().reset_index()
+        
+        # Generate heatmaps
+        lunch_heatmap = generate_heatmap(result, 'Lunch Prediction')
+        snacks_heatmap = generate_heatmap(result, 'Snacks Prediction')
+        
+        return {
+            "predictions": result.to_dict(orient="records"),
+            "heatmaps": {
+                "lunch": lunch_heatmap,
+                "snacks": snacks_heatmap
             }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
-    
-    elif any(v is not None for v in [footfall, lunch_ordered_prev, additional_order, snacks_ordered_prev, additional_order2]):
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+
+@app.post("/predict/")
+async def predict(
+    footfall: int = Form(None),
+    lunch_ordered_prev: int = Form(None),
+    additional_order: int = Form(None),
+    snacks_ordered_prev: int = Form(None),
+    additional_order2: int = Form(None)
+):
+    """
+    Endpoint to predict food consumption based on direct input values.
+    """
+    global trained_model
+
+    if trained_model is None:
+        raise HTTPException(status_code=400, detail="Model is not trained. Please upload an Excel file first.")
+
+    if any(v is not None for v in [footfall, lunch_ordered_prev, additional_order, snacks_ordered_prev, additional_order2]):
         input_data = np.array([[footfall or 0, lunch_ordered_prev or 0, additional_order or 0, snacks_ordered_prev or 0, additional_order2 or 0]])
         prediction = trained_model.predict(input_data)
         
@@ -225,7 +264,8 @@ async def predict(
         return response
     
     else:
-        raise HTTPException(status_code=400, detail="Provide either an Excel file or input values for prediction.")
+        raise HTTPException(status_code=400, detail="Provide input values for prediction.")
+
 
 
 @app.post("/admin/train_full_dataset/")
