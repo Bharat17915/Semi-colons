@@ -9,4 +9,10 @@ Things to add as future scope / improvements
 	- Items like Varan, Dal fry written in 4 different ways
 	- Spelling mistakes are very common
 4. Individual menu item count missing
-	- Watermelon is often in demand during summers, data should be provided.
+	- Watermelon is often in demand during summers, data of individual consumption should be provided.
+5. Change of model with more data
+	- Implementing a tree-based model will be more accurate when we have more/accurate data.
+6. Data processing
+	- For this application, processing data weekly in batches should be good enough rather than having AI process data as and when it is fed.
+	- A neural network based algorithm can be implemented to capture complex relationships.
+	- Store/Add data to a database to avoid manually uploading files
